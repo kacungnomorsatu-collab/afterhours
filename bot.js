@@ -778,7 +778,8 @@ async function startTebakAngkaRound(client, game, gameId) {
             const medals = ['🥇', '🥈', '🥉'];
             const leaderboardText = sortedPlayers.map((entry, i) => {
                 const [id, player] = entry;
-                return `${medals[i] || '🏅'} @${player.name}: ${player.points} points`;
+                const crown = id === game.creatorId ? ' 👑' : '';
+                return `${medals[i] || '🏅'} @${player.name}: ${player.points} points${crown}`;
             }).join('\n');
 
             const leaderboardEmbed = new EmbedBuilder()
@@ -3594,6 +3595,7 @@ client.on('messageCreate', async (message) => {
 
                     // Store game state
                     const gameData = {
+                        creatorId: message.author.id,  // Track who created the game
                         channelId: message.channelId,
                         lobbyMessageId: lobbyMsg.id,
                         gameMessageId: null, // Will be set when game starts
