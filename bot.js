@@ -2477,9 +2477,9 @@ client.on('interactionCreate', async (interaction) => {
                         .setColor('#5865F2')
                         .setTitle('🎲 Tebak Angka!')
                         .addFields(
-                            { name: `Player List [${game.players.size}]`, value: playerList, inline: false },
-                            { name: '🔄 Total Round', value: `${game.totalRounds}`, inline: false },
-                            { name: '🎯 Auto Start', value: `Setelah 60 detik`, inline: false }
+                            { name: `**Player List [${game.players.size}]**`, value: playerList, inline: false },
+                            { name: `**🔄 Total Round**`, value: `**${game.totalRounds}**`, inline: false },
+                            { name: `**🎯 Game otomatis dimulai setelah 60 detik**`, value: '\u200b', inline: false }
                         );
 
                     const gameChannel = await client.channels.fetch(gameId);
@@ -3564,9 +3564,9 @@ client.on('messageCreate', async (message) => {
                         .setColor('#5865F2')
                         .setTitle('🎲 Tebak Angka!')
                         .addFields(
-                            { name: `Player List [1]`, value: `@${message.author.username} 👑`, inline: false },
-                            { name: '🔄 Total Round', value: `${totalRounds}`, inline: false },
-                            { name: '🎯 Auto Start', value: `Setelah 60 detik`, inline: false }
+                            { name: `**Player List [1]**`, value: `@${message.author.username} 👑`, inline: false },
+                            { name: `**🔄 Total Round**`, value: `**${totalRounds}**`, inline: false },
+                            { name: `**🎯 Game otomatis dimulai setelah 60 detik**`, value: '\u200b', inline: false }
                         );
 
                     // Create buttons
