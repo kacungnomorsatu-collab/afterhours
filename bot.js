@@ -755,10 +755,24 @@ async function startTebakAngkaRound(client, game, gameId) {
 
         await gameMsg.edit({ embeds: [resultEmbed], components: [] });
 
-        // Update player scores
-        for (const playerId of correctPlayers) {
-            game.players.get(playerId).points += 5;
-        }
+        // Build current leaderboard for this round
+        const currentScores = Array.from(game.players.entries())
+            .sort((a, b) => b[1].points - a[1].points)
+            .map((entry, i) => {
+                const [id, player] = entry;
+                const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : '🏅';
+                return `${medal} @${player.name}: ${player.points} pts`;
+            })
+            .join('\n');
+
+        const scoreEmbed = new EmbedBuilder()
+            .setColor('#FFD700')
+            .setTitle('📊 Current Scores')
+            .setDescription(currentScores)
+            .setFooter({ text: `Round ${game.currentRound}/${game.totalRounds}` })
+            .setTimestamp();
+
+        await gameChannel.send({ embeds: [scoreEmbed] });
 
         // Move to next round or end game
         if (game.currentRound < game.totalRounds) {
@@ -2463,19 +2477,25 @@ client.on('interactionCreate', async (interaction) => {
                         points: 0
                     });
 
-                    // Update embed
-                    const playerList = Array.from(game.players.values()).map((p, i) => `${i + 1}. ${p.name}`).join('\n') || 'Belum ada players';
+                    // Update embed with all current players
+                    const playerList = Array.from(game.players.entries())
+                        .map((entry, i) => {
+                            const [userId, player] = entry;
+                            const isMention = userId === game.players.values().next().value?.id || i === 0 ? ' 👑' : '';
+                            return `@${player.name}${userId === interaction.user.id ? '' : isMention}`;
+                        })
+                        .join('\n') || 'Belum ada players';
+
                     const updatedEmbed = new EmbedBuilder()
                         .setColor('#5865F2')
                         .setTitle('🎲 Tebak Angka!')
                         .setDescription('Tebak angka dalam beberapa kesempatan dengan poin di tiap ronde!')
                         .addFields(
                             { name: `👥 Player List [${game.players.size}]`, value: playerList, inline: false },
-                            { name: '⏱️ Waktu per Ronde', value: `${game.timePerRound} detik`, inline: true },
-                            { name: '🔄 Total Ronde', value: `${game.totalRounds}`, inline: true },
-                            { name: 'Kesempatan Tebak', value: '10x per ronde', inline: true }
+                            { name: '🔄 Total Round', value: `${game.totalRounds}`, inline: true },
+                            { name: '⏱️ Auto Start', value: `Setelah 60 detik`, inline: true }
                         )
-                        .setFooter({ text: 'Tekan tombol di bawah untuk start' })
+                        .setFooter({ text: 'Game otomatis dimulai setelah 60 detik' })
                         .setTimestamp();
 
                     const gameChannel = await client.channels.fetch(gameId);
@@ -3021,7 +3041,10 @@ client.on('messageCreate', async (message) => {
                         if (guess === game.number) {
                             // Correct guess!
                             await message.react('✅');
-                            game.players.get(message.author.id).points += 5;
+                            const playerData = game.players.get(message.author.id);
+                            if (playerData) {
+                                playerData.points += 5;
+                            }
                             game.roundWinners.add(message.author.id);  // Track winner
                             game.roundWon = true;  // Mark round as won - auto-advance
                         } else if (guess < game.number) {
@@ -3555,11 +3578,11 @@ client.on('messageCreate', async (message) => {
                         .setTitle('🎲 Tebak Angka!')
                         .setDescription(`Tebak angka dalam beberapa kesempatan dengan poin di tiap ronde!`)
                         .addFields(
-                            { name: '👥 Player List [0]', value: 'Belum ada players', inline: false },
-                            { name: '🔄 Total Ronde', value: `${totalRounds}`, inline: true },
+                            { name: `👥 Player List [1]`, value: `@${message.author.username} 👑`, inline: false },
+                            { name: '🔄 Total Round', value: `${totalRounds}`, inline: true },
                             { name: '⏱️ Auto Start', value: `Setelah 60 detik`, inline: true }
                         )
-                        .setFooter({ text: 'Tekan tombol di bawah untuk join dan start' })
+                        .setFooter({ text: 'Game otomatis dimulai setelah 60 detik' })
                         .setTimestamp();
 
                     // Create buttons
@@ -3586,7 +3609,7 @@ client.on('messageCreate', async (message) => {
                     });
 
                     // Store game state
-                    client.tebakangkaGames.set(gameId, {
+                    const gameData = {
                         channelId: message.channelId,
                         lobbyMessageId: lobbyMsg.id,
                         gameMessageId: null, // Will be set when game starts
@@ -3599,7 +3622,15 @@ client.on('messageCreate', async (message) => {
                         roundAttempts: new Map(), // userId -> attempts
                         maxAttempts: 10,
                         createdAt: Date.now()
+                    };
+
+                    // Auto-add creator to players list
+                    gameData.players.set(message.author.id, {
+                        name: message.author.username,
+                        points: 0
                     });
+
+                    client.tebakangkaGames.set(gameId, gameData);
 
                     // Auto-start after 60 seconds if not started
                     setTimeout(async () => {
