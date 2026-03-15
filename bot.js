@@ -714,12 +714,13 @@ async function startTebakAngkaRound(client, game, gameId) {
 
         let roundActive = true;
         let timeLeft = game.timePerRound;
-        let correctPlayers = new Set();
+        game.roundWinners = new Set();  // Track who won this round
+        game.roundWon = false;  // Track if someone already won
 
         // Countdown timer
         const timerInterval = setInterval(async () => {
             timeLeft--;
-            if (timeLeft <= 0) {
+            if (timeLeft <= 0 || game.roundWon) {  // Exit if time runs out OR someone won
                 clearInterval(timerInterval);
                 roundActive = false;
             }
@@ -731,6 +732,9 @@ async function startTebakAngkaRound(client, game, gameId) {
         }
 
         clearInterval(timerInterval);
+
+        // Use tracked winners from game state
+        const correctPlayers = game.roundWinners;
 
         // Build result text
         const correctList = Array.from(correctPlayers).map(id => {
@@ -3018,6 +3022,8 @@ client.on('messageCreate', async (message) => {
                             // Correct guess!
                             await message.react('✅');
                             game.players.get(message.author.id).points += 5;
+                            game.roundWinners.add(message.author.id);  // Track winner
+                            game.roundWon = true;  // Mark round as won - auto-advance
                         } else if (guess < game.number) {
                             // Too small
                             await message.react('🔼');
