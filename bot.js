@@ -714,7 +714,7 @@ async function startTebakAngkaRound(client, game, gameId) {
 
         let roundActive = true;
         let timeLeft = game.timePerRound;
-        game.roundWinners = new Set();  // Track who won this round
+        game.roundWinners = new Map();  // Track who won and their attempts {userId: attempts}
         game.roundWon = false;  // Track if someone already won
 
         // Countdown timer
@@ -736,43 +736,30 @@ async function startTebakAngkaRound(client, game, gameId) {
         // Use tracked winners from game state
         const correctPlayers = game.roundWinners;
 
-        // Build result text
-        const correctList = Array.from(correctPlayers).map(id => {
-            const player = game.players.get(id);
-            const attempts = game.roundAttempts.get(id) || 0;
-            return `@${player.name} menebak angka yang benar, 📍 dan mendapatkan 5 point!`;
-        }).join('\n') || 'Tidak ada yang benar';
+        // Build result text with number and points based on attempts
+        const resultList = Array.from(correctPlayers.entries())
+            .map(([id, attempts]) => {
+                const player = game.players.get(id);
+                const pointsEarned = Math.max(1, 11 - attempts);
+                return `@${player.name} menebak angka yang benar, ${game.number} dan mendapatkan ${pointsEarned} point!`;
+            })
+            .join('\n');
 
         // Reveal answer & show results
+        const resultDesc = correctPlayers.size > 0 
+            ? resultList 
+            : `@Tidak ada yang benar ❌\n\nAngka yang benar adalah ${game.number}\nRound berikutnya akan dimulai dalam 5 detik`;
+
         const resultEmbed = new EmbedBuilder()
             .setColor('#FFD700')
             .setTitle('🎲 Tebak Angka!')
-            .setDescription(`@${Array.from(correctPlayers).map(id => game.players.get(id).name).join(' dan @') || 'Tidak ada'} menebak angka yang benar, ${correctPlayers.size > 0 ? '📍' : '❌'} dan mendapatkan ${correctPlayers.size > 0 ? '5' : '0'} point!`)
+            .setDescription(resultDesc)
             .addFields(
-                { name: `Round ${game.currentRound}/${game.totalRounds}`, value: correctPlayers.size > 0 ? 'Game Over!' : 'Lanjut ke round berikutnya', inline: false }
+                { name: `Round ${game.currentRound}/${game.totalRounds}`, value: correctPlayers.size > 0 ? 'Lanjut ke round berikutnya' : 'Lanjut ke round berikutnya', inline: false }
             )
             .setTimestamp();
 
         await gameMsg.edit({ embeds: [resultEmbed], components: [] });
-
-        // Build current leaderboard for this round
-        const currentScores = Array.from(game.players.entries())
-            .sort((a, b) => b[1].points - a[1].points)
-            .map((entry, i) => {
-                const [id, player] = entry;
-                const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : '🏅';
-                return `${medal} @${player.name}: ${player.points} pts`;
-            })
-            .join('\n');
-
-        const scoreEmbed = new EmbedBuilder()
-            .setColor('#FFD700')
-            .setTitle('📊 Current Scores')
-            .setDescription(currentScores)
-            .setFooter({ text: `Round ${game.currentRound}/${game.totalRounds}` })
-            .setTimestamp();
-
-        await gameChannel.send({ embeds: [scoreEmbed] });
 
         // Move to next round or end game
         if (game.currentRound < game.totalRounds) {
@@ -3043,9 +3030,12 @@ client.on('messageCreate', async (message) => {
                             await message.react('✅');
                             const playerData = game.players.get(message.author.id);
                             if (playerData) {
-                                playerData.points += 5;
+                                // Calculate points based on attempts: 11 - attempts (max 10 pts, min 1 pt)
+                                const pointsEarned = Math.max(1, 11 - attempts);
+                                playerData.points += pointsEarned;
                             }
-                            game.roundWinners.add(message.author.id);  // Track winner
+                            // Track winner with their attempt count
+                            game.roundWinners.set(message.author.id, attempts);
                             game.roundWon = true;  // Mark round as won - auto-advance
                         } else if (guess < game.number) {
                             // Too small
