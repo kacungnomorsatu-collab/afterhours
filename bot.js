@@ -677,6 +677,106 @@ function scheduleGiveawayEnd(giveawayId) {
 }
 
 
+// Tebak Angka Game Round Handler
+async function startTebakAngkaRound(client, game, gameId) {
+    try {
+        const gameChannel = await client.channels.fetch(gameId);
+        const lobbyMsg = await gameChannel.messages.fetch(game.messageId);
+
+        // Create round embed
+        const roundEmbed = new EmbedBuilder()
+            .setColor('#5865F2')
+            .setTitle(`🎲 Tebak Angka! - Round ${game.currentRound}/${game.totalRounds}`)
+            .setDescription(`Aku udah ambil angka antara 1-100!\n\nKalian punya **${game.timePerRound} detik** dan **10 kesempatan** untuk menebak!\n\nKirim angka aja (misal: \`50\`)`)
+            .addFields(
+                { name: '👥 Players', value: Array.from(game.players.values()).map(p => `${p.name}: ${p.points}pt`).join('\n'), inline: false },
+                { name: '⏳ Waktu Tersisa', value: `${game.timePerRound}s`, inline: true },
+                { name: '🎯 Angka', value: '?', inline: true }
+            )
+            .setFooter({ text: `Kesempatan: 10/10` })
+            .setTimestamp();
+
+        await lobbyMsg.edit({ embeds: [roundEmbed], components: [] });
+
+        // Reset round attempts
+        for (const playerId of game.players.keys()) {
+            game.roundAttempts.set(playerId, 0);
+        }
+
+        let roundActive = true;
+        let timeLeft = game.timePerRound;
+        let correctPlayers = new Set();
+
+        // Countdown timer
+        const timerInterval = setInterval(() => {
+            timeLeft--;
+            if (timeLeft <= 0) {
+                clearInterval(timerInterval);
+                roundActive = false;
+            }
+        }, 1000);
+
+        // Wait for round to end or timeout
+        while (roundActive && timeLeft > 0) {
+            await new Promise(resolve => setTimeout(resolve, 100));
+        }
+
+        clearInterval(timerInterval);
+
+        // Reveal answer & show results
+        const resultEmbed = new EmbedBuilder()
+            .setColor('#FFD700')
+            .setTitle(`🎲 Tebak Angka! - Round ${game.currentRound}/${game.totalRounds} Selesai`)
+            .setDescription(`**Angkanya adalah: ${game.number}**`)
+            .addFields(
+                { name: '✅ Benar', value: correctPlayers.size > 0 ? Array.from(correctPlayers).map(id => game.players.get(id).name).join(', ') : 'Tidak ada', inline: true },
+                { name: '❌ Salah', value: Array.from(game.players.keys()).filter(id => !correctPlayers.has(id)).map(id => game.players.get(id).name).join(', ') || 'Tidak ada', inline: true }
+            )
+            .addFields(
+                { name: '📊 Skor', value: Array.from(game.players.entries()).map(([id, p]) => `${p.name}: ${p.points}pt`).join('\n'), inline: false }
+            )
+            .setTimestamp();
+
+        await lobbyMsg.edit({ embeds: [resultEmbed] });
+
+        // Move to next round or end game
+        if (game.currentRound < game.totalRounds) {
+            game.currentRound++;
+            game.number = Math.floor(Math.random() * 100) + 1;
+            
+            // Wait 5 seconds before next round
+            await new Promise(resolve => setTimeout(resolve, 5000));
+            
+            await startTebakAngkaRound(client, game, gameId);
+        } else {
+            // Game ended - show leaderboard
+            const sortedPlayers = Array.from(game.players.entries())
+                .sort((a, b) => b[1].points - a[1].points);
+
+            const medals = ['🥇', '🥈', '🥉'];
+            const leaderboardText = sortedPlayers.map((entry, i) => {
+                const [id, player] = entry;
+                return `${medals[i] || '🏅'} **${player.name}**: ${player.points} points`;
+            }).join('\n');
+
+            const leaderboardEmbed = new EmbedBuilder()
+                .setColor('#FFD700')
+                .setTitle('🏆 Leaderboard')
+                .setDescription(leaderboardText)
+                .setFooter({ text: 'Tebak Angka' })
+                .setTimestamp();
+
+            await lobbyMsg.edit({ embeds: [leaderboardEmbed], components: [] });
+            
+            game.status = 'ended';
+            client.tebakangkaGames.delete(gameId);
+        }
+
+    } catch (error) {
+        console.error('Error in startTebakAngkaRound:', error);
+    }
+}
+
 const rest = new REST({ version: '10' }).setToken(TOKEN);
 
 (async () => {
@@ -2303,6 +2403,146 @@ client.on('interactionCreate', async (interaction) => {
     }
 
     if (interaction.isButton()) {
+        // Handle Tebak Angka lobby buttons
+        if (interaction.customId.startsWith('tebakangka_')) {
+            try {
+                const [, action, gameId] = interaction.customId.split('_');
+                
+                if (!client.tebakangkaGames || !client.tebakangkaGames.has(gameId)) {
+                    return await interaction.reply({
+                        content: '❌ Game tidak ada atau sudah berakhir!',
+                        flags: 64,
+                        ephemeral: true
+                    });
+                }
+
+                const game = client.tebakangkaGames.get(gameId);
+
+                // JOIN button
+                if (action === 'join') {
+                    if (game.status !== 'lobby') {
+                        return await interaction.reply({
+                            content: '❌ Game sudah dimulai! Tidak bisa join sekarang',
+                            flags: 64,
+                            ephemeral: true
+                        });
+                    }
+
+                    if (game.players.has(interaction.user.id)) {
+                        return await interaction.reply({
+                            content: '❌ Kamu sudah join!',
+                            flags: 64,
+                            ephemeral: true
+                        });
+                    }
+
+                    // Add player
+                    game.players.set(interaction.user.id, {
+                        name: interaction.user.username,
+                        points: 0
+                    });
+
+                    // Update embed
+                    const playerList = Array.from(game.players.values()).map((p, i) => `${i + 1}. ${p.name}`).join('\n') || 'Belum ada players';
+                    const updatedEmbed = new EmbedBuilder()
+                        .setColor('#5865F2')
+                        .setTitle('🎲 Tebak Angka!')
+                        .setDescription('Tebak angka dalam beberapa kesempatan dengan poin di tiap ronde!')
+                        .addFields(
+                            { name: `👥 Player List [${game.players.size}]`, value: playerList, inline: false },
+                            { name: '⏱️ Waktu per Ronde', value: `${game.timePerRound} detik`, inline: true },
+                            { name: '🔄 Total Ronde', value: `${game.totalRounds}`, inline: true },
+                            { name: 'Kesempatan Tebak', value: '10x per ronde', inline: true }
+                        )
+                        .setFooter({ text: 'Tekan tombol di bawah untuk start' })
+                        .setTimestamp();
+
+                    const gameChannel = await client.channels.fetch(gameId);
+                    const lobbyMsg = await gameChannel.messages.fetch(game.messageId);
+                    await lobbyMsg.edit({ embeds: [updatedEmbed] });
+
+                    await interaction.reply({
+                        content: `✅ Berhasil join! Total players: ${game.players.size}`,
+                        flags: 64,
+                        ephemeral: true
+                    });
+                }
+
+                // START button
+                else if (action === 'start') {
+                    if (game.status !== 'lobby') {
+                        return await interaction.reply({
+                            content: '❌ Game sudah dimulai!',
+                            flags: 64,
+                            ephemeral: true
+                        });
+                    }
+
+                    if (game.players.size === 0) {
+                        return await interaction.reply({
+                            content: '❌ Minimal ada 1 player untuk start!',
+                            flags: 64,
+                            ephemeral: true
+                        });
+                    }
+
+                    game.status = 'running';
+                    game.currentRound = 1;
+                    game.number = Math.floor(Math.random() * 100) + 1;
+                    
+                    // Reset attempts untuk semua players
+                    for (const playerId of game.players.keys()) {
+                        game.roundAttempts.set(playerId, 0);
+                    }
+
+                    await interaction.deferUpdate();
+
+                    // Start game loop
+                    await startTebakAngkaRound(client, game, gameId);
+                }
+
+                // EXIT button
+                else if (action === 'exit') {
+                    client.tebakangkaGames.delete(gameId);
+                    
+                    const gameChannel = await client.channels.fetch(gameId);
+                    const lobbyMsg = await gameChannel.messages.fetch(game.messageId);
+                    
+                    const exitEmbed = new EmbedBuilder()
+                        .setColor('#FF0000')
+                        .setTitle('❌ Game Dibatalkan')
+                        .setDescription('Lobbynya ditutup. Jalankan `fam.tebakangka` lagi untuk game baru!')
+                        .setTimestamp();
+                    
+                    await lobbyMsg.edit({ embeds: [exitEmbed], components: [] });
+                    
+                    await interaction.reply({
+                        content: '✅ Game dibatalkan',
+                        flags: 64,
+                        ephemeral: true
+                    });
+                }
+
+                // TURN BASED & ADD BOT - placeholder untuk sekarang
+                else if (action === 'turn' || action === 'bot') {
+                    await interaction.reply({
+                        content: '⚠️ Feature ini belum tersedia!',
+                        flags: 64,
+                        ephemeral: true
+                    });
+                }
+
+            } catch (error) {
+                console.error('Error handling tebakangka button:', error);
+                await interaction.reply({
+                    content: `❌ Error: ${error.message}`,
+                    flags: 64,
+                    ephemeral: true
+                }).catch(() => {});
+            }
+            return;
+        }
+
         // Handle RPS challenge buttons
         if (interaction.customId.startsWith('rps_')) {
             try {
@@ -2701,6 +2941,39 @@ client.on('messageCreate', async (message) => {
     if (!message.guild) return;
 
     try {
+        // Check if player is guessing in a Tebak Angka game
+        if (client.tebakangkaGames && client.tebakangkaGames.has(message.channelId) && !message.content.startsWith(PREFIX)) {
+            const game = client.tebakangkaGames.get(message.channelId);
+            
+            if (game.status === 'running' && game.players.has(message.author.id)) {
+                const guess = parseInt(message.content.trim());
+                
+                if (!isNaN(guess) && guess >= 1 && guess <= 100) {
+                    const attempts = game.roundAttempts.get(message.author.id) || 0;
+                    
+                    if (attempts < game.maxAttempts) {
+                        game.roundAttempts.set(message.author.id, attempts + 1);
+                        
+                        if (guess === game.number) {
+                            // Correct guess!
+                            await message.react('✅');
+                            game.players.get(message.author.id).points += 1;
+                        } else if (guess < game.number) {
+                            // Too small
+                            await message.react('🔼');
+                        } else {
+                            // Too big
+                            await message.react('🔽');
+                        }
+                    } else {
+                        // Attempts exceeded
+                        await message.react('❌');
+                    }
+                    return;
+                }
+            }
+        }
+
         // Handle prefix commands
         if (message.content.startsWith(PREFIX)) {
             const args = message.content.slice(PREFIX.length).trim().split(/\s+/);
@@ -3174,148 +3447,106 @@ client.on('messageCreate', async (message) => {
                 }
             }
 
-            // fam.guess - Number guessing game
-            else if (command === 'guess') {
+            // fam.tebakangka - Multiplayer number guessing game with lobby
+            else if (command === 'tebakangka') {
                 try {
-                    // Initialize game storage jika belum ada
-                    if (!client.guessGames) {
-                        client.guessGames = new Map();
+                    // Initialize game storage
+                    if (!client.tebakangkaGames) {
+                        client.tebakangkaGames = new Map();
                     }
 
-                    const gameId = `${message.author.id}-${message.guildId}`;
-                    const guess = parseInt(args[1]);
-
-                    // Check jika user tidak ada argument - start new game
-                    if (!args[1]) {
-                        // Check jika user sudah ada game yang running
-                        if (client.guessGames.has(gameId)) {
-                            const game = client.guessGames.get(gameId);
-                            return message.reply({
-                                content: `❌ Kamu sudah punya game yang running! Angka: ${game.number}\nGunakan: \`fam.guess [1-100]\` untuk menebak atau \`fam.guess quit\` untuk berhenti`,
-                                flags: 64
-                            });
+                    // Parse custom time & rounds
+                    let timePerRound = 60; // Default 60 seconds
+                    let totalRounds = 5;   // Default 5 rounds
+                    
+                    if (args[1]) {
+                        const customTime = parseInt(args[1]);
+                        if (!isNaN(customTime) && customTime > 0) {
+                            timePerRound = customTime;
                         }
-
-                        // Start new game
-                        const randomNumber = Math.floor(Math.random() * 100) + 1;
-                        client.guessGames.set(gameId, {
-                            number: randomNumber,
-                            attempts: 0,
-                            startedAt: Date.now(),
-                            userId: message.author.id
-                        });
-
-                        const startEmbed = new EmbedBuilder()
-                            .setColor('#00D9FF')
-                            .setTitle('🎯 Number Guessing Game Started!')
-                            .setDescription('Aku udah ambil number antara 1-100. Coba tebak!')
-                            .addFields(
-                                { name: 'Cara Main', value: '`fam.guess [angka]` - Tebak number\n`fam.guess quit` - Keluar dari game\n`fam.guess hint` - Minta bantuan', inline: false }
-                            )
-                            .setFooter({ text: `${message.author.username}` })
-                            .setTimestamp();
-
-                        return await message.reply({ embeds: [startEmbed] });
                     }
-
-                    // Check jika user quit
-                    if (args[1].toLowerCase() === 'quit') {
-                        if (!client.guessGames.has(gameId)) {
-                            return message.reply({
-                                content: '❌ Kamu tidak ada game yang running!',
-                                flags: 64
-                            });
+                    
+                    if (args[2]) {
+                        const customRounds = parseInt(args[2]);
+                        if (!isNaN(customRounds) && customRounds > 0) {
+                            totalRounds = customRounds;
                         }
-
-                        const game = client.guessGames.get(gameId);
-                        client.guessGames.delete(gameId);
-
-                        const quitEmbed = new EmbedBuilder()
-                            .setColor('#FF6600')
-                            .setTitle('🎯 Game Ended')
-                            .setDescription(`Angkanya adalah: **${game.number}**`)
-                            .addFields(
-                                { name: 'Attempts', value: `${game.attempts}`, inline: true }
-                            )
-                            .setTimestamp();
-
-                        return await message.reply({ embeds: [quitEmbed] });
                     }
 
-                    // Check jika user minta hint
-                    if (args[1].toLowerCase() === 'hint') {
-                        if (!client.guessGames.has(gameId)) {
-                            return message.reply({
-                                content: '❌ Kamu tidak ada game yang running! Mulai dengan `fam.guess`',
-                                flags: 64
-                            });
-                        }
-
-                        const game = client.guessGames.get(gameId);
-                        const num = game.number;
-                        let hint = '';
-
-                        if (num <= 25) hint = '🔽 Angkanya tergolong **LOW** (1-25)';
-                        else if (num <= 50) hint = '⬇️ Angkanya tergolong **MEDIUM-LOW** (26-50)';
-                        else if (num <= 75) hint = '⬆️ Angkanya tergolong **MEDIUM-HIGH** (51-75)';
-                        else hint = '🔼 Angkanya tergolong **HIGH** (76-100)';
-
-                        const hintEmbed = new EmbedBuilder()
-                            .setColor('#FFD700')
-                            .setTitle('💡 Hint')
-                            .setDescription(hint)
-                            .setTimestamp();
-
-                        return await message.reply({ embeds: [hintEmbed] });
-                    }
-
-                    // Validate input adalah number
-                    if (isNaN(guess) || guess < 1 || guess > 100) {
+                    const gameId = `${message.channelId}`;
+                    
+                    // Check if game already running in this channel
+                    if (client.tebakangkaGames.has(gameId)) {
                         return message.reply({
-                            content: '❌ Input harus angka antara 1-100! Contoh: `fam.guess 50`',
+                            content: '❌ Sudah ada game Tebak Angka yang running di channel ini!',
                             flags: 64
                         });
                     }
 
-                    // Check jika user punya game running
-                    if (!client.guessGames.has(gameId)) {
-                        return message.reply({
-                            content: '❌ Kamu tidak ada game yang running! Mulai dengan `fam.guess`',
-                            flags: 64
-                        });
-                    }
-
-                    const game = client.guessGames.get(gameId);
-                    game.attempts += 1;
-
-                    let response = '';
-                    let isCorrect = false;
-                    let color = '#00D9FF';
-
-                    if (guess === game.number) {
-                        isCorrect = true;
-                        color = '#00FF00';
-                        response = `🎉 **CORRECT!** Angkanya memang **${game.number}**!\nDone dalam **${game.attempts}** attempt(s)!`;
-                        client.guessGames.delete(gameId);
-                    } else if (guess < game.number) {
-                        response = `⬆️ Angkanya **LEBIH BESAR** dari ${guess}`;
-                    } else {
-                        response = `⬇️ Angkanya **LEBIH KECIL** dari ${guess}`;
-                    }
-
-                    const guessEmbed = new EmbedBuilder()
-                        .setColor(color)
-                        .setTitle('🎯 Guess')
-                        .setDescription(response)
+                    // Create lobby embed
+                    const lobbyEmbed = new EmbedBuilder()
+                        .setColor('#5865F2')
+                        .setTitle('🎲 Tebak Angka!')
+                        .setDescription(`Tebak angka dalam beberapa kesempatan dengan poin di tiap ronde!`)
                         .addFields(
-                            { name: 'Your Guess', value: `${guess}`, inline: true },
-                            { name: 'Attempts', value: `${game.attempts}`, inline: true }
+                            { name: '👥 Player List [0]', value: 'Belum ada players', inline: false },
+                            { name: '⏱️ Waktu per Ronde', value: `${timePerRound} detik`, inline: true },
+                            { name: '🔄 Total Ronde', value: `${totalRounds}`, inline: true },
+                            { name: 'Kesempatan Tebak', value: '10x per ronde', inline: true }
                         )
+                        .setFooter({ text: 'Tekan tombol di bawah untuk start' })
                         .setTimestamp();
 
-                    await message.reply({ embeds: [guessEmbed] });
+                    // Create buttons
+                    const joinBtn = new ButtonBuilder()
+                        .setCustomId(`tebakangka_join_${gameId}`)
+                        .setLabel('Join')
+                        .setStyle(ButtonStyle.Success);
+
+                    const startBtn = new ButtonBuilder()
+                        .setCustomId(`tebakangka_start_${gameId}`)
+                        .setLabel('Start')
+                        .setStyle(ButtonStyle.Primary);
+
+                    const turnBtn = new ButtonBuilder()
+                        .setCustomId(`tebakangka_turn_${gameId}`)
+                        .setLabel('Turn Based')
+                        .setStyle(ButtonStyle.Secondary);
+
+                    const botBtn = new ButtonBuilder()
+                        .setCustomId(`tebakangka_bot_${gameId}`)
+                        .setLabel('Add Bot')
+                        .setStyle(ButtonStyle.Secondary);
+
+                    const exitBtn = new ButtonBuilder()
+                        .setCustomId(`tebakangka_exit_${gameId}`)
+                        .setLabel('Exit')
+                        .setStyle(ButtonStyle.Danger);
+
+                    const buttonRow = new ActionRowBuilder().addComponents(joinBtn, startBtn, turnBtn, botBtn, exitBtn);
+
+                    const lobbyMsg = await message.reply({ 
+                        embeds: [lobbyEmbed],
+                        components: [buttonRow]
+                    });
+
+                    // Store game state
+                    client.tebakangkaGames.set(gameId, {
+                        channelId: message.channelId,
+                        messageId: lobbyMsg.id,
+                        players: new Map(), // userId -> {name, points}
+                        status: 'lobby', // lobby, running, ended
+                        currentRound: 0,
+                        totalRounds: totalRounds,
+                        timePerRound: timePerRound,
+                        number: null,
+                        roundAttempts: new Map(), // userId -> attempts
+                        maxAttempts: 10,
+                        createdAt: Date.now()
+                    });
+
                 } catch (error) {
-                    console.error('Error executing guess command:', error);
+                    console.error('Error executing tebakangka command:', error);
                     await message.reply({
                         content: `❌ Error: ${error.message}`,
                         flags: 64
@@ -3375,8 +3606,8 @@ client.on('messageCreate', async (message) => {
                                 inline: false 
                             },
                             { 
-                                name: '🎲 fam.guess [angka/hint/quit]', 
-                                value: 'Guessing Number Game (1-100)\n**Start:** `fam.guess`\n**Guess:** `fam.guess 50`\n**Hint:** `fam.guess hint`\n**Stop:** `fam.guess quit`', 
+                                name: '🎲 fam.tebakangka [waktu] [ronde]', 
+                                value: 'Multiplayer Guessing Number Game Lobby\n**Default:** `fam.tebakangka` (60s, 5 rounds)\n**Custom:** `fam.tebakangka 120 10` (120s, 10 rounds)\n**Per round:** 10 kesempatan, players kirim angka aja', 
                                 inline: false 
                             },
                             // ===== UTILITY =====
