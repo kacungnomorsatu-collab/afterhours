@@ -14,7 +14,8 @@ const client = new Client({
         GatewayIntentBits.GuildMembers,
         GatewayIntentBits.MessageContent,
         GatewayIntentBits.DirectMessages,
-        GatewayIntentBits.GuildMessageReactions
+        GatewayIntentBits.GuildMessageReactions,
+        GatewayIntentBits.GuildVoiceStates
     ] 
 });
 
@@ -3961,6 +3962,23 @@ client.on('guildMemberAdd', async (member) => {
 });
 
 // Handle voice state changes (join/leave voice channel)
+client.on('voiceStateUpdate', async (oldState, newState) => {
+    try {
+        // User joined a voice channel
+        if (!oldState.channel && newState.channel) {
+            const voiceChannel = newState.channel;
+            await voiceChannel.send(`<@${newState.id}> has joined`);
+        }
+        // User left a voice channel
+        else if (oldState.channel && !newState.channel) {
+            const voiceChannel = oldState.channel;
+            await voiceChannel.send(`<@${newState.id}> has left`);
+        }
+    } catch (error) {
+        console.error('Error handling voice state update:', error);
+    }
+});
+
 // Error handling
 client.on('error', error => {
     console.error('❌ Discord client error:', error);
