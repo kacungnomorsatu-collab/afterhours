@@ -3967,12 +3967,24 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
         // User joined a voice channel
         if (!oldState.channel && newState.channel) {
             const voiceChannel = newState.channel;
-            await voiceChannel.send(`<@${newState.id}> has joined`);
+            const user = await newState.client.users.fetch(newState.id);
+            
+            const joinEmbed = new EmbedBuilder()
+                .setColor('#00FF00')
+                .setDescription(`<@${newState.id}> has joined 🔊 ${voiceChannel.name}`);
+            
+            await voiceChannel.send({ embeds: [joinEmbed] });
         }
         // User left a voice channel
         else if (oldState.channel && !newState.channel) {
             const voiceChannel = oldState.channel;
-            await voiceChannel.send(`<@${newState.id}> has left`);
+            const user = await newState.client.users.fetch(newState.id);
+            
+            const leaveEmbed = new EmbedBuilder()
+                .setColor('#FF0000')
+                .setDescription(`<@${newState.id}> has left 🔊 ${voiceChannel.name}`);
+            
+            await voiceChannel.send({ embeds: [leaveEmbed] });
         }
     } catch (error) {
         console.error('Error handling voice state update:', error);
