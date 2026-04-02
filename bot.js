@@ -3913,8 +3913,10 @@ client.on('guildMemberUpdate', async (oldMember, newMember) => {
             if (channel) {
                 const boostCount = newMember.guild.premiumSubscriptionCount || 0;
                 const boostEmbed = new EmbedBuilder()
-                    .setColor(0x5865F2)
-                    .setAuthor({ name: `<a:FAM_Booster2:1470223709154574427> ${newMember.user.username} just boosted the server!` })
+                    .setAuthor({ 
+                        name: `${newMember.user.username} just boosted the server!`,
+                        iconURL: `https://cdn.discordapp.com/emojis/1470223709154574427.gif?size=96`
+                    })
                     .setDescription(`Hi, ${newMember}! Thanks for the boost.\nEnjoy your special perks <a:FAM_Booster:1470223346741416043>\n\nClaim your Custom Role at <#1469743159306227855>`)
                     .setThumbnail(newMember.user.displayAvatarURL())
                     .setTimestamp()
